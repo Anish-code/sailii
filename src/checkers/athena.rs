@@ -20,6 +20,7 @@ impl Check for Checker<Athena> {
             checker_name: self.get_name().to_string(),
             checker_description: self.get_description().to_string(),
             link: self.link.to_string(),
+            match_ratio: 0.0,
         }
     }
 

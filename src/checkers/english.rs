@@ -62,7 +62,7 @@ const COMMON_ENGLISH_WORDS: &[&str] = &[
     "happy", "sad", "angry", "tired", "sleepy", "hungry", "thirsty",
     "healthy", "sick", "ill", "pain", "hurt", "safe", "danger",
     "rich", "poor", "young", "old", "new", "modern", "ancient",
-    "special", "normal", "simple", "difficult", "easy", "hard",
+        "special", "normal", "simple", "difficult", "easy", "hard", "is", "test",
     "common", "rare", "unique", "typical", "usual", "strange",
     "possible", "impossible", "probable", "certain", "sure",
 ];
@@ -73,67 +73,71 @@ impl Check for Checker<EnglishChecker> {
     fn check(&self, text: &str) -> CheckResult {
         let text = text.trim();
 
+        let early_result = |is_identified: bool| CheckResult {
+            is_identified,
+            text: text.to_string(),
+            description: String::new(),
+            checker_name: self.get_name().to_string(),
+            checker_description: self.get_description().to_string(),
+            link: self.link.to_string(),
+            match_ratio: 0.0,
+        };
+
         if text.len() < 3 {
-            return CheckResult {
-                is_identified: false,
-                text: text.to_string(),
-                description: String::new(),
-                checker_name: self.get_name().to_string(),
-                checker_description: self.get_description().to_string(),
-                link: self.link.to_string(),
-            };
+            return early_result(false);
         }
 
         let printable_ratio = text.chars().filter(|c| c.is_ascii_graphic() || c.is_ascii_whitespace()).count() as f64 / text.len() as f64;
         if printable_ratio < 0.8 {
-            return CheckResult {
-                is_identified: false,
-                text: text.to_string(),
-                description: String::new(),
-                checker_name: self.get_name().to_string(),
-                checker_description: self.get_description().to_string(),
-                link: self.link.to_string(),
-            };
+            return early_result(false);
         }
 
         let words: Vec<&str> = text.split_whitespace().collect();
         if words.is_empty() {
-            return CheckResult {
-                is_identified: false,
-                text: text.to_string(),
-                description: String::new(),
-                checker_name: self.get_name().to_string(),
-                checker_description: self.get_description().to_string(),
-                link: self.link.to_string(),
-            };
+            return early_result(false);
         }
 
         let lower_words: Vec<String> = words.iter().map(|w| w.to_lowercase().trim_matches(|c: char| !c.is_alphabetic()).to_string()).collect();
         let meaningful_words: Vec<&str> = lower_words.iter().map(|s| s.as_str()).filter(|w| w.len() >= 2).collect();
 
         if meaningful_words.is_empty() {
-            return CheckResult {
-                is_identified: false,
-                text: text.to_string(),
-                description: String::new(),
-                checker_name: self.get_name().to_string(),
-                checker_description: self.get_description().to_string(),
-                link: self.link.to_string(),
-            };
+            return early_result(false);
         }
 
         let matches = meaningful_words.iter().filter(|w| COMMON_ENGLISH_WORDS.contains(w)).count();
         let ratio = matches as f64 / meaningful_words.len() as f64;
 
-        let mut is_identified = ratio >= 0.15 || (meaningful_words.len() <= 3 && matches >= 1);
+        let mut is_identified = matches == meaningful_words.len()
+            || (ratio >= 0.55 && matches >= 2);
 
         if !is_identified && meaningful_words.len() == 1 && meaningful_words[0].len() >= 8 {
             let word = meaningful_words[0];
-            let substr_matches = COMMON_ENGLISH_WORDS
-                .iter()
-                .filter(|&&w| w.len() >= 3 && word.contains(w))
-                .count();
-            if substr_matches >= 2 {
+            let wlen = word.len();
+            let mut covered = vec![false; wlen];
+            let mut total_covered = 0usize;
+            let mut substr_count = 0usize;
+            let mut dict_words: Vec<&str> = COMMON_ENGLISH_WORDS.iter()
+                .filter(|w| w.len() >= 3 && w.len() <= wlen)
+                .copied().collect();
+            dict_words.sort_by(|a, b| b.len().cmp(&a.len()));
+            for &dw in &dict_words {
+                let dwlen = dw.len();
+                let max_start = wlen - dwlen;
+                for start in 0..=max_start {
+                    let end = start + dwlen;
+                    let already_covered = (start..end).any(|i| covered[i]);
+                    if !already_covered && word[start..end] == *dw {
+                        for i in start..end {
+                            covered[i] = true;
+                        }
+                        total_covered += dwlen;
+                        substr_count += 1;
+                        break;
+                    }
+                }
+            }
+            let coverage_ratio = total_covered as f64 / wlen as f64;
+            if substr_count >= 2 && coverage_ratio >= 0.6 {
                 is_identified = true;
             }
         }
@@ -149,6 +153,7 @@ impl Check for Checker<EnglishChecker> {
             checker_name: self.get_name().to_string(),
             checker_description: self.get_description().to_string(),
             link: self.link.to_string(),
+            match_ratio: ratio,
         }
     }
 
