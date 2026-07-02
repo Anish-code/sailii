@@ -42,6 +42,29 @@ const COMMON_ENGLISH_WORDS: &[&str] = &[
     "succeed", "suffer", "supply", "survey", "survive", "suspect", "teach", "transfer",
     "transform", "treat", "utilize", "verify", "hello", "world", "welcome", "please",
     "thanks", "sorry", "congratulations", "congratulation", "success", "failed",
+    "attack", "attacks", "attacked", "attacking", "dawn", "morning", "night",
+    "evening", "afternoon", "midnight", "noon", "today", "tomorrow", "yesterday",
+    "north", "south", "east", "west", "northern", "southern", "eastern", "western",
+    "left", "right", "center", "middle", "front", "back", "side",
+    "stop", "start", "begin", "end", "finish", "continue", "pause",
+    "forward", "backward", "upward", "downward", "inside", "outside",
+    "above", "below", "under", "over", "before", "after", "during",
+    "always", "never", "sometimes", "often", "rarely", "usually",
+    "quick", "slow", "fast", "hard", "soft", "heavy", "light",
+    "open", "close", "enter", "exit", "push", "pull", "press",
+    "red", "blue", "green", "yellow", "black", "white", "brown",
+    "pink", "purple", "orange", "gray", "gold", "silver",
+    "mother", "father", "sister", "brother", "daughter", "son",
+    "friend", "family", "parent", "child", "baby", "adult",
+    "city", "town", "village", "street", "road", "building",
+    "floor", "wall", "door", "window", "room", "kitchen", "bedroom",
+    "summer", "winter", "spring", "autumn", "fall",
+    "happy", "sad", "angry", "tired", "sleepy", "hungry", "thirsty",
+    "healthy", "sick", "ill", "pain", "hurt", "safe", "danger",
+    "rich", "poor", "young", "old", "new", "modern", "ancient",
+    "special", "normal", "simple", "difficult", "easy", "hard",
+    "common", "rare", "unique", "typical", "usual", "strange",
+    "possible", "impossible", "probable", "certain", "sure",
 ];
 
 pub struct EnglishChecker;
@@ -102,7 +125,18 @@ impl Check for Checker<EnglishChecker> {
         let matches = meaningful_words.iter().filter(|w| COMMON_ENGLISH_WORDS.contains(w)).count();
         let ratio = matches as f64 / meaningful_words.len() as f64;
 
-        let is_identified = ratio >= 0.15 || (meaningful_words.len() <= 3 && matches >= 1);
+        let mut is_identified = ratio >= 0.15 || (meaningful_words.len() <= 3 && matches >= 1);
+
+        if !is_identified && meaningful_words.len() == 1 && meaningful_words[0].len() >= 8 {
+            let word = meaningful_words[0];
+            let substr_matches = COMMON_ENGLISH_WORDS
+                .iter()
+                .filter(|&&w| w.len() >= 3 && word.contains(w))
+                .count();
+            if substr_matches >= 2 {
+                is_identified = true;
+            }
+        }
 
         CheckResult {
             is_identified,
