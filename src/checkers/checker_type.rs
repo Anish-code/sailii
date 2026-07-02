@@ -9,6 +9,7 @@ pub struct CheckResult {
     pub checker_name: String,
     pub checker_description: String,
     pub link: String,
+    pub match_ratio: f64,
 }
 
 pub trait Check: Sync + Send {

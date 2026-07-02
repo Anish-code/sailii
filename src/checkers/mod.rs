@@ -3,7 +3,7 @@ pub use checker_type::{CheckResult, Checker, Check as CheckTrait};
 pub(crate) use checker_type::Check;
 pub(crate) use athena::Athena;
 
-mod english;
+pub(crate) mod english;
 mod athena;
 
 use std::sync::LazyLock;

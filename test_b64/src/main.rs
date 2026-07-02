@@ -1,0 +1,1 @@
+fn main() { use base64::Engine; let bytes = base64::engine::general_purpose::STANDARD.decode("VGhpcyBpcyBhIHRlc3Q=").unwrap(); let s = String::from_utf8(bytes).unwrap(); println!("Decoded: {}", s); println!("Trimmed: |{}|", s.trim()); }

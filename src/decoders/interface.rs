@@ -12,6 +12,7 @@ pub struct CrackResult {
     pub key: Option<String>,
     pub description: String,
     pub link: String,
+    pub match_ratio: f64,
 }
 
 impl CrackResult {
@@ -25,6 +26,7 @@ impl CrackResult {
             key: None,
             description: description.to_string(),
             link: link.to_string(),
+            match_ratio: 0.0,
         }
     }
 }

@@ -169,6 +169,20 @@ impl Crack for Decoder<VigenereDecoder> {
         let fallback_keys = [
             "KEY", "SECRET", "CIPHER", "CODE", "PASSWORD", "LEMON",
             "CLOCK", "ROYAL", "QUEEN", "ALPHA",
+            "APPLE", "HOUSE", "PHONE", "WATER", "MONEY", "PAPER",
+            "TABLE", "CHAIR", "DOOR", "WINDOW", "FLOOR", "WALL",
+            "THERE", "WHICH", "THEIR", "WOULD", "ABOUT", "PEOPLE",
+            "COULD", "FIRST", "WORLD", "STILL", "SHOULD", "NEED",
+            "STATE", "NEVER", "START", "LIGHT", "SOUND", "WHITE",
+            "BLACK", "GREEN", "GREAT", "SMALL", "UNDER", "LARGE",
+            "AFTER", "RIGHT", "HOUSE", "PLACE", "POINT", "GROUP",
+            "WOMAN", "CHILD", "HELLO", "WORLD", "ALICE", "BOB",
+            "CHARLIE", "DELTA", "ECHO", "BRAVO", "ALPHA", "GAMMA",
+            "BLUE", "PINK", "PURPLE", "GOLD", "SILVER", "METAL",
+            "QUEEN", "KING", "JACK", "QUEEN", "ACE", "SPADE",
+            "HEART", "DIAMOND", "CLUB", "RIVER", "BRIDGE", "FOREST",
+            "MOUNT", "VALLEY", "OCEAN", "DESERT", "ISLAND", "STONE",
+            "CLOUD", "STORM", "RAIN", "SNOW", "WIND", "FIRE", "EARTH",
         ];
         for key in &fallback_keys {
             if tried.contains(&key.to_string()) {
@@ -201,6 +215,37 @@ impl Crack for Decoder<VigenereDecoder> {
                     result.key = Some(key);
                     result.checker_name = check_result.checker_name;
                     return result;
+                }
+            }
+        }
+
+        if clean_len < 20 {
+            let brute_budget = std::time::Duration::from_millis(500);
+            let deadline = std::time::Instant::now() + brute_budget;
+            let max_brute_len = if clean_len < 12 { 4 } else if clean_len < 16 { 3 } else { 2 };
+            'brute: for len in 2..=max_brute_len {
+                let max_attempts = 26usize.pow(len as u32);
+                for attempt in 0..max_attempts {
+                    if std::time::Instant::now() >= deadline {
+                        break 'brute;
+                    }
+                    let mut key = String::with_capacity(len);
+                    let mut n = attempt;
+                    for _ in 0..len {
+                        key.push((b'A' + (n % 26) as u8) as char);
+                        n /= 26;
+                    }
+                    let decoded = vigenere_decode(text, &key);
+                    if check_string_success(&decoded, text) {
+                        let check_result = checker.check_text(&decoded);
+                        if check_result.is_identified {
+                            result.success = true;
+                            result.unencrypted_text = Some(vec![decoded]);
+                            result.key = Some(key);
+                            result.checker_name = check_result.checker_name;
+                            return result;
+                        }
+                    }
                 }
             }
         }

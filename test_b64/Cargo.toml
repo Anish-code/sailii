@@ -1,0 +1,7 @@
+[package]
+name = "test_b64"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+C:\Users\anish\Desktop\crypto\sailii\Cargo.toml:17:base64 = "0.22"

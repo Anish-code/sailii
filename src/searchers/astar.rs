@@ -95,14 +95,14 @@ impl AStarSearch {
                 break;
             }
 
-            let results: Vec<Option<CrackResult>> = {
+            let results: Vec<CrackResult> = {
                 let searcher = &self;
-                batch.into_iter().map(|node| {
+                batch.into_iter().flat_map(|node| {
                     searcher.expand_node(&node, max_depth)
                 }).collect()
             };
 
-            for result in results.into_iter().flatten() {
+            for result in results {
                 if result.success {
                     let key = result.unencrypted_text.as_ref()
                         .and_then(|v| v.first())
@@ -120,9 +120,9 @@ impl AStarSearch {
         }
     }
 
-    fn expand_node(&self, node: &SearchNode, max_depth: usize) -> Option<CrackResult> {
+    fn expand_node(&self, node: &SearchNode, max_depth: usize) -> Vec<CrackResult> {
         if node.path.len() >= max_depth {
-            return None;
+            return Vec::new();
         }
 
         let is_first = node.path.is_empty();
@@ -137,9 +137,11 @@ impl AStarSearch {
             d
         };
 
+        let mut results = Vec::new();
+
         for decoder in &decoders {
             if self.stop_flag.load(Ordering::Relaxed) {
-                return None;
+                return results;
             }
 
             let decoder_name = decoder.get_name();
@@ -157,7 +159,14 @@ impl AStarSearch {
 
             if result.success {
                 record_decoder_success(decoder_name);
-                return Some(result);
+                let key = result.unencrypted_text.as_ref()
+                    .and_then(|v| v.first())
+                    .cloned()
+                    .unwrap_or_default();
+                if !self.seen_results.contains(&key) {
+                    results.push(result);
+                }
+                continue;
             }
 
             if result.unencrypted_text.is_some() {
@@ -200,6 +209,6 @@ impl AStarSearch {
             }
         }
 
-        None
+        results
     }
 }
