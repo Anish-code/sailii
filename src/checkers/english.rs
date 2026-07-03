@@ -59,7 +59,7 @@ const COMMON_ENGLISH_WORDS: &[&str] = &[
     "city", "town", "village", "street", "road", "building",
     "floor", "wall", "door", "window", "room", "kitchen", "bedroom",
     "summer", "winter", "spring", "autumn", "fall",
-    "happy", "sad", "angry", "tired", "sleepy", "hungry", "thirsty",
+    "happy", "sad", "angry", "tired", "sleepy", "hungry", "thirsty", "sweet", "lovely",
     "healthy", "sick", "ill", "pain", "hurt", "safe", "danger",
     "rich", "poor", "young", "old", "new", "modern", "ancient",
         "special", "normal", "simple", "difficult", "easy", "hard", "is", "test",
