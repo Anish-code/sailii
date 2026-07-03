@@ -1,6 +1,7 @@
 use crate::decoders::{Crack, CrackResult, Decoder, check_string_success};
 use crate::checkers::CheckerTypes;
 use std::marker::PhantomData;
+use std::sync::OnceLock;
 
 pub struct VigenereDecoder;
 
@@ -60,9 +61,252 @@ fn index_of_coincidence(text: &str) -> f64 {
     sum / (total * (total - 1.0))
 }
 
+fn words_by_length() -> &'static [Vec<&'static str>; 21] {
+    static BY_LEN: OnceLock<[Vec<&'static str>; 21]> = OnceLock::new();
+    BY_LEN.get_or_init(|| {
+        let words = [
+            "is", "to", "in", "it", "of", "on", "at", "be", "by", "or", "as", "an", "we",
+            "he", "me", "my", "us", "up", "no", "go", "do", "so", "if", "am", "hi",
+            "the", "and", "for", "are", "not", "you", "all", "any", "can", "had", "her",
+            "was", "one", "our", "out", "has", "but", "him", "his", "its", "may", "she",
+            "two", "way", "who", "get", "now", "how", "why", "use", "say", "see", "new",
+            "man", "boy", "old", "own", "put", "let", "set", "run", "got", "men", "day",
+            "eye", "big", "hot", "cut", "die", "bed", "age", "arm", "air", "car", "cat",
+            "dog", "cup", "ear", "eat", "far", "fat", "fun", "gun", "hat", "job", "key",
+            "law", "leg", "lie", "lip", "map", "mix", "oil", "sea", "sir", "sky", "son",
+            "tax", "tea", "top", "cry", "dry", "low", "bag", "bit", "cap", "egg", "fit",
+            "gap", "jaw", "lap", "lot", "mad", "nap", "red", "blue", "pink", "gold",
+            "home", "like", "love", "time", "life", "hand", "part", "case", "work", "play",
+            "door", "room", "word", "idea", "land", "food", "city", "team", "girl", "baby",
+            "book", "card", "test", "plan", "star", "fish", "bird", "tree", "hill", "lake",
+            "boat", "road", "rain", "wind", "snow", "heat", "cold", "dark", "long", "high",
+            "deep", "wide", "full", "open", "near", "hard", "soft", "rich", "poor", "sick",
+            "dead", "fine", "sure", "late", "best", "last", "loud", "warm", "cool", "safe",
+            "weak", "fast", "slow", "thin", "name", "with", "they", "have", "this", "what",
+            "from", "will", "were", "been", "said", "more", "very", "each", "your", "well",
+            "than", "then", "look", "only", "come", "also", "back", "much", "over", "such",
+            "even", "most", "find", "here", "give", "just", "know", "take", "into", "year",
+            "good", "some", "them", "make", "kind", "must", "soon", "show", "tell", "does",
+            "food", "four", "help", "keep", "last", "need", "next", "upon", "very", "went",
+            "well", "call", "turn", "move", "love", "long", "down", "left", "still", "water",
+            "place", "great", "sound", "small", "under", "large", "right", "spell", "think",
+            "three", "story", "world", "never", "start", "light", "white", "black", "green",
+            "every", "tight", "earth", "father", "mother", "sister", "brother", "friend",
+            "school", "family", "number", "people", "should", "country", "because", "really",
+            "before", "after", "change", "simple", "better", "follow", "around", "little",
+            "pretty", "thank", "sweet", "lovely", "honey", "queen", "river", "horse",
+            "table", "watch", "cover", "music", "class", "stone", "garden", "happy", "house",
+            "woman", "child", "night", "point", "drive", "order", "month", "voice", "early",
+            "about", "again", "while", "where", "thing", "would", "could", "there", "their",
+            "which", "first", "since", "today", "other", "carry", "raise", "break", "fight",
+            "throw", "spend", "learn", "agree", "allow", "appear", "believe", "between",
+            "develop", "continue", "determine", "establish", "everything", "something",
+            "nothing", "government", "company", "example", "service", "process", "remember",
+            "different", "important", "beautiful", "wonderful", "information", "question",
+            "hello", "welcome", "please", "thanks", "sorry", "attack", "attacks", "morning",
+            "evening", "afternoon", "midnight", "tomorrow", "yesterday", "message",
+            "password", "username", "secret", "encrypted", "decoded", "decrypted", "flag",
+            "test", "anish",
+        ];
+        let mut by_len: [Vec<&'static str>; 21] = Default::default();
+        for &w in &words {
+            if w.len() <= 20 && w.len() >= 2 {
+                by_len[w.len()].push(w);
+            }
+        }
+        by_len
+    })
+}
+
+fn try_word_boundary(text: &str, checker: &CheckerTypes) -> Result<String, ()> {
+    let cx_words: Vec<(usize, Vec<u8>)> = {
+        let mut pos = 0usize;
+        text.split_whitespace().filter_map(|w| {
+            let letters: Vec<u8> = w.bytes().filter(|b| b.is_ascii_alphabetic()).map(|b| b.to_ascii_uppercase() - b'A').collect();
+            if letters.is_empty() { return None; }
+            let start = pos;
+            pos += letters.len();
+            Some((start, letters))
+        }).collect()
+    };
+    if cx_words.len() < 2 { return Err(()); }
+
+    let by_len = words_by_length();
+    let total_chars: usize = cx_words.iter().map(|(_, w)| w.len()).sum();
+    let max_klen = (total_chars / 2).min(20).max(2);
+
+    for klen in 2..=max_klen {
+        let mut key: Vec<Option<u8>> = vec![None; klen];
+        if backtrack_fill(&cx_words, &by_len, 0, &mut key, klen) {
+            if key.iter().all(|k| k.is_some()) {
+                let key_str: String = key.iter().map(|k| (k.unwrap() + b'A') as char).collect();
+                let decoded = vigenere_decode(text, &key_str);
+                let cr = checker.check_text(&decoded);
+                if cr.is_identified {
+                    return Ok(key_str);
+                }
+            }
+        }
+    }
+    Err(())
+}
+
+fn backtrack_fill(
+    cx_words: &[(usize, Vec<u8>)],
+    by_len: &[Vec<&'static str>; 21],
+    idx: usize,
+    key: &mut Vec<Option<u8>>,
+    klen: usize,
+) -> bool {
+    if idx == cx_words.len() {
+        return key.iter().all(|k| k.is_some());
+    }
+    let (start, cx_letters) = &cx_words[idx];
+    let wlen = cx_letters.len();
+    if wlen > 20 { return false; }
+
+    for &pw in &by_len[wlen] {
+        let pw_bytes = pw.as_bytes();
+        let mut ok = true;
+        let mut updates: Vec<(usize, u8)> = Vec::new();
+        for i in 0..wlen {
+            let kp = (start + i) % klen;
+            let kv = (cx_letters[i] + 26 - (pw_bytes[i].to_ascii_uppercase() - b'A')) % 26;
+            if let Some(existing) = key[kp] {
+                if existing != kv { ok = false; break; }
+            } else {
+                updates.push((kp, kv));
+            }
+        }
+        if !ok { continue; }
+        for &(kp, kv) in &updates { key[kp] = Some(kv); }
+        if backtrack_fill(cx_words, by_len, idx + 1, key, klen) { return true; }
+        for &(kp, _) in &updates { key[kp] = None; }
+    }
+    false
+}
+
+fn vigenere_score(text: &str, key: &str) -> f64 {
+    let decoded = vigenere_decode(text, key);
+    full_text_chi_squared(&decoded)
+}
+
+fn full_text_chi_squared(text: &str) -> f64 {
+    let clean = filter_alpha(text);
+    let total = clean.len() as f64;
+    if total < 2.0 {
+        return f64::MAX;
+    }
+    let mut counts = [0usize; 26];
+    for b in clean.bytes() {
+        if b >= b'A' && b <= b'Z' {
+            counts[(b - b'A') as usize] += 1;
+        }
+    }
+    let mut chi = 0.0;
+    for i in 0..26 {
+        let expected = total * ENGLISH_FREQ[i];
+        if expected > 0.0 {
+            let diff = counts[i] as f64 - expected;
+            chi += diff * diff / expected;
+        }
+    }
+    chi
+}
+
+fn hill_climb_one(text: &str, key_bytes: &mut Vec<u8>, deadline: std::time::Instant) -> f64 {
+    let mut best_score = vigenere_score(text, &String::from_utf8(key_bytes.clone()).unwrap());
+    for _ in 0..100 {
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        let mut improved = false;
+        for pos in 0..key_bytes.len() {
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+            let mut best_for_pos = key_bytes[pos];
+            for letter in 0..26 {
+                if std::time::Instant::now() >= deadline {
+                    break;
+                }
+                let l = b'A' + letter;
+                if l == best_for_pos {
+                    continue;
+                }
+                key_bytes[pos] = l;
+                let test_key = String::from_utf8(key_bytes.clone()).unwrap();
+                let score = vigenere_score(text, &test_key);
+                if score < best_score {
+                    best_score = score;
+                    best_for_pos = l;
+                    improved = true;
+                }
+            }
+            key_bytes[pos] = best_for_pos;
+        }
+        if !improved {
+            break;
+        }
+    }
+    best_score
+}
+
+fn hill_climb_key(text: &str, initial_key: &str, deadline: std::time::Instant, checker: &CheckerTypes) -> Option<String> {
+    let klen = initial_key.len();
+    let mut best_key = initial_key.to_uppercase().into_bytes();
+    let mut best_score = hill_climb_one(text, &mut best_key, deadline);
+
+    let check_key = |key: &[u8]| -> Option<String> {
+        let k = String::from_utf8(key.to_vec()).unwrap();
+        let decoded = vigenere_decode(text, &k);
+        if check_string_success(&decoded, text) {
+            let cr = checker.check_text(&decoded);
+            if cr.is_identified {
+                return Some(k);
+            }
+        }
+        None
+    };
+
+    if let Some(r) = check_key(&best_key) {
+        return Some(r);
+    }
+
+    let mut rng_state = deadline.elapsed().as_nanos() as u64 ^ 0xDEADBEEF;
+    #[inline(always)]
+    fn rng_next(state: &mut u64) -> u8 {
+        *state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (*state % 26) as u8
+    }
+
+    let restarts_per = if klen >= 8 { 100 } else { 50 };
+    for pos0 in 0..26 {
+        if std::time::Instant::now() >= deadline { break; }
+        for _ in 0..restarts_per {
+            if std::time::Instant::now() >= deadline { break; }
+            let mut trial = Vec::with_capacity(klen);
+            trial.push(b'A' + pos0);
+            for _ in 1..klen {
+                trial.push(b'A' + rng_next(&mut rng_state));
+            }
+            let score = hill_climb_one(text, &mut trial, deadline);
+            if score < best_score {
+                best_score = score;
+                best_key = trial;
+                if let Some(r) = check_key(&best_key) {
+                    return Some(r);
+                }
+            }
+        }
+    }
+
+    check_key(&best_key)
+}
+
 fn estimate_key_lengths(text: &str) -> Vec<usize> {
     let clean = filter_alpha(text);
-    let max_key_len = (clean.len() / 3).min(20).max(2);
+    let max_key_len = (clean.len() / 2).min(20).max(2);
     let mut scores: Vec<(usize, f64)> = (2..=max_key_len)
         .map(|k| {
             let mut ic_sum = 0.0;
@@ -79,7 +323,15 @@ fn estimate_key_lengths(text: &str) -> Vec<usize> {
         })
         .collect();
     scores.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-    scores.into_iter().take(5).map(|(k, _)| k).collect()
+    let ic_top: Vec<usize> = scores.iter().take(5).map(|(k, _)| *k).collect();
+    let all: Vec<usize> = (2..=max_key_len).collect();
+    let mut combined: Vec<usize> = ic_top.clone();
+    for k in all {
+        if !combined.contains(&k) {
+            combined.push(k);
+        }
+    }
+    combined
 }
 
 fn chi_squared(observed: &[usize; 26], total: f64) -> f64 {
@@ -145,6 +397,7 @@ impl Crack for Decoder<VigenereDecoder> {
         }
 
         let key_lengths = estimate_key_lengths(text);
+        eprintln!("[vigenere] estimated key lengths: {:?}", key_lengths);
         let mut tried = Vec::new();
 
         for &kl in &key_lengths {
@@ -162,6 +415,46 @@ impl Crack for Decoder<VigenereDecoder> {
                     result.key = Some(key);
                     result.checker_name = check_result.checker_name;
                     return result;
+                }
+            }
+        }
+
+        if let Ok(wb_key) = try_word_boundary(text, checker) {
+            let decoded = vigenere_decode(text, &wb_key);
+            if check_string_success(&decoded, text) {
+                let check_result = checker.check_text(&decoded);
+                if check_result.is_identified {
+                    result.success = true;
+                    result.unencrypted_text = Some(vec![decoded]);
+                    result.key = Some(wb_key);
+                    result.checker_name = check_result.checker_name;
+                    return result;
+                }
+            }
+        }
+
+        let hc_budget = std::time::Duration::from_millis(15000);
+        let hc_deadline = std::time::Instant::now() + hc_budget;
+        for &kl in &key_lengths {
+            if std::time::Instant::now() >= hc_deadline {
+                break;
+            }
+            if kl < 6 {
+                continue;
+            }
+            let initial = solve_key(text, kl);
+            if let Some(hill_key) = hill_climb_key(text, &initial, hc_deadline, checker) {
+                eprintln!("[vigenere] hill climbing produced key: {}", hill_key);
+                let decoded = vigenere_decode(text, &hill_key);
+                if check_string_success(&decoded, text) {
+                    let check_result = checker.check_text(&decoded);
+                    if check_result.is_identified {
+                        result.success = true;
+                        result.unencrypted_text = Some(vec![decoded]);
+                        result.key = Some(hill_key);
+                        result.checker_name = check_result.checker_name;
+                        return result;
+                    }
                 }
             }
         }
@@ -219,32 +512,29 @@ impl Crack for Decoder<VigenereDecoder> {
             }
         }
 
-        if clean_len < 20 {
-            let brute_budget = std::time::Duration::from_millis(500);
-            let deadline = std::time::Instant::now() + brute_budget;
-            let max_brute_len = if clean_len < 12 { 4 } else if clean_len < 16 { 3 } else { 2 };
-            'brute: for len in 2..=max_brute_len {
-                let max_attempts = 26usize.pow(len as u32);
-                for attempt in 0..max_attempts {
-                    if std::time::Instant::now() >= deadline {
-                        break 'brute;
-                    }
-                    let mut key = String::with_capacity(len);
-                    let mut n = attempt;
-                    for _ in 0..len {
-                        key.push((b'A' + (n % 26) as u8) as char);
-                        n /= 26;
-                    }
-                    let decoded = vigenere_decode(text, &key);
-                    if check_string_success(&decoded, text) {
-                        let check_result = checker.check_text(&decoded);
-                        if check_result.is_identified {
-                            result.success = true;
-                            result.unencrypted_text = Some(vec![decoded]);
-                            result.key = Some(key);
-                            result.checker_name = check_result.checker_name;
-                            return result;
-                        }
+        let max_brute_len = if clean_len < 12 { 4 } else if clean_len < 16 { 3 } else { 2 };
+        let brute_deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        'brute: for len in 2..=max_brute_len {
+            let max_attempts = 26usize.pow(len as u32);
+            for attempt in 0..max_attempts {
+                if std::time::Instant::now() >= brute_deadline {
+                    break 'brute;
+                }
+                let mut key = String::with_capacity(len);
+                let mut n = attempt;
+                for _ in 0..len {
+                    key.push((b'A' + (n % 26) as u8) as char);
+                    n /= 26;
+                }
+                let decoded = vigenere_decode(text, &key);
+                if check_string_success(&decoded, text) {
+                    let check_result = checker.check_text(&decoded);
+                    if check_result.is_identified {
+                        result.success = true;
+                        result.unencrypted_text = Some(vec![decoded]);
+                        result.key = Some(key);
+                        result.checker_name = check_result.checker_name;
+                        return result;
                     }
                 }
             }
