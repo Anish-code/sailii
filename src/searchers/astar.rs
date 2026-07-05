@@ -60,6 +60,7 @@ impl AStarSearch {
     }
 
     pub fn start(&self, initial_text: &str, max_depth: usize) {
+        let _ = std::fs::write("C:\\Users\\anish\\Desktop\\crypto\\sailii\\debug_start.txt", format!("start called! text={}", initial_text));
         let initial_node = SearchNode {
             text: initial_text.to_string(),
             path: Vec::new(),
@@ -121,6 +122,7 @@ impl AStarSearch {
     }
 
     fn expand_node(&self, node: &SearchNode, max_depth: usize) -> Vec<CrackResult> {
+        let _ = std::fs::write("C:\\Users\\anish\\Desktop\\crypto\\sailii\\debug_expand.txt", format!("expand_node called! text={} path_len={}", node.text, node.path.len()));
         if node.path.len() >= max_depth {
             return Vec::new();
         }
