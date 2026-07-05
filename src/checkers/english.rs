@@ -1,71 +1,6 @@
 use crate::checkers::{Check, CheckResult, Checker};
+use crate::dictionary;
 use std::marker::PhantomData;
-
-const COMMON_ENGLISH_WORDS: &[&str] = &[
-    "the", "be", "to", "of", "and", "a", "in", "that", "have", "it", "for", "not", "on", "with",
-    "he", "as", "you", "do", "at", "this", "but", "his", "by", "from", "they", "we", "say", "her",
-    "she", "or", "an", "will", "my", "one", "all", "would", "there", "their", "what", "so", "up",
-    "out", "if", "about", "who", "get", "which", "go", "me", "when", "make", "can", "like", "time",
-    "no", "just", "him", "know", "take", "people", "into", "year", "your", "good", "some", "could",
-    "them", "see", "other", "than", "then", "now", "look", "only", "come", "its", "over", "think",
-    "also", "back", "after", "use", "two", "how", "our", "work", "first", "well", "way", "even",
-    "new", "want", "because", "any", "these", "give", "day", "most", "are", "was", "were", "been",
-    "said", "more", "very", "every", "still", "between", "own", "each", "right", "great", "same",
-    "old", "another", "while", "three", "place", "small", "under", "large", "long", "off", "hand",
-    "high", "different", "end", "through", "turn", "should", "world", "need", "play", "must",
-    "may", "set", "home", "hand", "again", "find", "many", "much", "ask", "part", "last", "put",
-    "thing", "next", "keep", "head", "stand", "own", "show", "between", "should", "country",
-    "house", "point", "here", "number", "group", "water", "man", "woman", "child", "life", "hand",
-    "eye", "face", "place", "week", "case", "question", "program", "system", "information",
-    "government", "company", "problem", "example", "service", "support", "process", "product",
-    "result", "research", "development", "business", "education", "community", "security",
-    "something", "everything", "nothing", "message", "password", "username", "admin", "login",
-    "access", "secret", "encrypted", "decoded", "decrypted", "flag", "key", "text", "data",
-    "file", "name", "user", "code", "type", "value", "level", "control", "state", "line",
-    "order", "report", "member", "price", "check", "help", "form", "area", "view", "task",
-    "design", "test", "list", "note", "rate", "rule", "role", "link", "flag", "mark", "step",
-    "plan", "item", "cost", "fact", "idea", "move", "team", "sort", "kind", "door", "rule",
-    "table", "story", "range", "field", "power", "class", "force", "base", "space", "heart",
-    "light", "sound", "color", "sense", "speed", "shape", "truth", "watch", "score", "track",
-    "shall", "drive", "cross", "speak", "cover", "carry", "raise", "break", "fight", "throw",
-    "spend", "fall", "lead", "learn", "agree", "allow", "appear", "change", "believe",
-    "decide", "expect", "happen", "include", "provide", "remember", "require", "consider",
-    "continue", "determine", "develop", "establish", "identify", "indicate", "involve",
-    "maintain", "measure", "prepare", "present", "produce", "represent", "understand",
-    "value", "follow", "receive", "achieve", "complete", "contain", "describe", "discuss",
-    "explain", "express", "improve", "increase", "reduce", "remove", "replace", "report",
-    "suggest", "support", "believe", "benefit", "challenge", "commit", "communicate",
-    "contribute", "defend", "define", "deliver", "depend", "protect", "provide", "publish",
-    "realize", "recognize", "recommend", "record", "reform", "register", "regulate",
-    "reinforce", "relate", "release", "rely", "remove", "require", "research", "resolve",
-    "respond", "restore", "reveal", "secure", "select", "settle", "solve", "submit",
-    "succeed", "suffer", "supply", "survey", "survive", "suspect", "teach", "transfer",
-    "transform", "treat", "utilize", "verify", "hello", "world", "welcome", "please",
-    "thanks", "sorry", "congratulations", "congratulation", "success", "failed",
-    "attack", "attacks", "attacked", "attacking", "dawn", "morning", "night",
-    "evening", "afternoon", "midnight", "noon", "today", "tomorrow", "yesterday",
-    "north", "south", "east", "west", "northern", "southern", "eastern", "western",
-    "left", "right", "center", "middle", "front", "back", "side",
-    "stop", "start", "begin", "end", "finish", "continue", "pause",
-    "forward", "backward", "upward", "downward", "inside", "outside",
-    "above", "below", "under", "over", "before", "after", "during",
-    "always", "never", "sometimes", "often", "rarely", "usually",
-    "quick", "slow", "fast", "hard", "soft", "heavy", "light",
-    "open", "close", "enter", "exit", "push", "pull", "press",
-    "red", "blue", "green", "yellow", "black", "white", "brown",
-    "pink", "purple", "orange", "gray", "gold", "silver",
-    "mother", "father", "sister", "brother", "daughter", "son",
-    "friend", "family", "parent", "child", "baby", "adult",
-    "city", "town", "village", "street", "road", "building",
-    "floor", "wall", "door", "window", "room", "kitchen", "bedroom",
-    "summer", "winter", "spring", "autumn", "fall",
-    "happy", "sad", "angry", "tired", "sleepy", "hungry", "thirsty", "sweet", "lovely",
-    "healthy", "sick", "ill", "pain", "hurt", "safe", "danger",
-    "rich", "poor", "young", "old", "new", "modern", "ancient",
-        "special", "normal", "simple", "difficult", "easy", "hard", "is", "test",
-    "common", "rare", "unique", "typical", "usual", "strange",
-    "possible", "impossible", "probable", "certain", "sure",
-];
 
 pub struct EnglishChecker;
 
@@ -104,11 +39,14 @@ impl Check for Checker<EnglishChecker> {
             return early_result(false);
         }
 
-        let matches = meaningful_words.iter().filter(|w| COMMON_ENGLISH_WORDS.contains(w)).count();
-        let ratio = matches as f64 / meaningful_words.len() as f64;
+        let dict = dictionary::wordlist();
 
-        let mut is_identified = matches == meaningful_words.len()
-            || (ratio >= 0.55 && matches >= 2);
+        let long_matches = meaningful_words.iter().filter(|w| w.len() >= 3 && dict.set.contains::<str>(w)).count();
+        let short_matches = meaningful_words.iter().filter(|w| w.len() == 2 && dict.set.contains::<str>(w)).count();
+        let total_ratio = (long_matches + short_matches) as f64 / meaningful_words.len() as f64;
+
+        let mut is_identified = (long_matches == meaningful_words.iter().filter(|w| w.len() >= 3).count() && long_matches >= 1)
+            || (long_matches >= 1 && total_ratio >= 0.65);
 
         if !is_identified && meaningful_words.len() == 1 && meaningful_words[0].len() >= 8 {
             let word = meaningful_words[0];
@@ -116,26 +54,29 @@ impl Check for Checker<EnglishChecker> {
             let mut covered = vec![false; wlen];
             let mut total_covered = 0usize;
             let mut substr_count = 0usize;
-            let mut dict_words: Vec<&str> = COMMON_ENGLISH_WORDS.iter()
-                .filter(|w| w.len() >= 3 && w.len() <= wlen)
-                .copied().collect();
-            dict_words.sort_by(|a, b| b.len().cmp(&a.len()));
-            for &dw in &dict_words {
-                let dwlen = dw.len();
-                let max_start = wlen - dwlen;
-                for start in 0..=max_start {
-                    let end = start + dwlen;
-                    let already_covered = (start..end).any(|i| covered[i]);
-                    if !already_covered && word[start..end] == *dw {
-                        for i in start..end {
-                            covered[i] = true;
-                        }
-                        total_covered += dwlen;
-                        substr_count += 1;
-                        break;
+
+            let mut found: Vec<(usize, usize, &str)> = Vec::new();
+            for start in 0..wlen {
+                for end in (start + 3)..=wlen.min(start + 20) {
+                    let sub = &word[start..end];
+                    if dict.set.contains(sub) {
+                        found.push((start, end - start, sub));
                     }
                 }
             }
+            found.sort_by(|a, b| b.1.cmp(&a.1));
+
+            for &(start, len, _) in &found {
+                let already_covered = (start..start + len).any(|i| covered[i]);
+                if !already_covered {
+                    for i in start..start + len {
+                        covered[i] = true;
+                    }
+                    total_covered += len;
+                    substr_count += 1;
+                }
+            }
+
             let coverage_ratio = total_covered as f64 / wlen as f64;
             if substr_count >= 2 && coverage_ratio >= 0.6 {
                 is_identified = true;
@@ -146,14 +87,14 @@ impl Check for Checker<EnglishChecker> {
             is_identified,
             text: text.to_string(),
             description: if is_identified {
-                format!("English plaintext detected ({}% word match)", (ratio * 100.0) as u32)
+                format!("English plaintext detected ({}% word match)", (total_ratio * 100.0) as u32)
             } else {
                 String::new()
             },
             checker_name: self.get_name().to_string(),
             checker_description: self.get_description().to_string(),
             link: self.link.to_string(),
-            match_ratio: ratio,
+            match_ratio: total_ratio,
         }
     }
 

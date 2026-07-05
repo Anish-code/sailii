@@ -70,6 +70,7 @@ pub fn search_for_plaintext(input: &str) -> Option<CrackResult> {
                         .unwrap_or("");
                     let check_result = english_checker.check_text(plaintext);
                     result.match_ratio = check_result.match_ratio;
+                    println!("[searcher] Got result: decoder={} plaintext={:?} match_ratio={}", result.decoder, plaintext, result.match_ratio);
                     if result.match_ratio >= 0.90 {
                         stop_flag.store(true, Ordering::Relaxed);
                         insert_cache(input, &result);
