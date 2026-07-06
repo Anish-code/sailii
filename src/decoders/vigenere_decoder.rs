@@ -61,38 +61,43 @@ fn index_of_coincidence(text: &str) -> f64 {
 }
 
 fn try_word_boundary_all(text: &str, checker: &CheckerTypes) -> Vec<String> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2000);
+    let total_deadline = std::time::Instant::now() + std::time::Duration::from_millis(5000);
     let cx_words: Vec<(usize, Vec<u8>)> = {
         let mut pos = 0usize;
         text.split_whitespace().filter_map(|w| {
             let letters: Vec<u8> = w.bytes().filter(|b| b.is_ascii_alphabetic()).map(|b| b.to_ascii_uppercase() - b'A').collect();
             if letters.is_empty() { return None; }
+            if letters.len() < 2 { pos += 1; return None; }
             let start = pos;
             pos += letters.len();
             Some((start, letters))
         }).collect()
     };
-    if cx_words.len() < 2 { return vec![]; }
+    if cx_words.len() < 2 { eprintln!("[vigenere] wb: fewer than 2 multi-letter words"); return vec![]; }
 
     let total_chars: usize = cx_words.iter().map(|(_, w)| w.len()).sum();
     let max_klen = (total_chars / 2).min(20).max(2);
     let dict = crate::dictionary::wordlist();
     let mut results = Vec::new();
+    let per_klen = std::time::Duration::from_millis(2500);
 
     for klen in 2..=max_klen {
+        if std::time::Instant::now() >= total_deadline { eprintln!("[vigenere] wb: total deadline expired, breaking at klen={}", klen); break; }
+        let klen_deadline = std::time::Instant::now() + per_klen;
         let mut key: Vec<Option<u8>> = vec![None; klen];
-        if std::time::Instant::now() >= deadline { break; }
-        if backtrack_fill(&cx_words, &dict.by_length, 0, &mut key, klen, deadline) {
+        if backtrack_fill(&cx_words, &dict.by_length, 0, &mut key, klen, klen_deadline) {
             if key.iter().all(|k| k.is_some()) {
                 let key_str: String = key.iter().map(|k| (k.unwrap() + b'A') as char).collect();
                 let decoded = vigenere_decode(text, &key_str);
                 let cr = checker.check_text(&decoded);
+                eprintln!("[vigenere] wb: klen={} key={} decoded={:?} identified={}", klen, key_str, decoded, cr.is_identified);
                 if cr.is_identified {
                     results.push(key_str);
                 }
             }
         }
     }
+    eprintln!("[vigenere] wb: done, results={:?}", results);
     results
 }
 
@@ -444,18 +449,17 @@ impl Crack for Decoder<VigenereDecoder> {
                     }
                 }
             } else {
-                println!("[vigenere] word_boundary did not find any key");
+                eprintln!("[vigenere] word_boundary did not find any key");
             }
         }
 
         let hc_budget = std::time::Duration::from_millis(15000);
         let hc_deadline = std::time::Instant::now() + hc_budget;
-        for &kl in &key_lengths {
+        let mut hc_klens: Vec<usize> = key_lengths.iter().filter(|&&kl| kl >= 4).copied().collect();
+        hc_klens.sort();
+        for &kl in &hc_klens {
             if std::time::Instant::now() >= hc_deadline {
                 break;
-            }
-            if kl < 6 {
-                continue;
             }
             let initial = solve_key(text, kl);
             if let Some(hill_key) = hill_climb_key(text, &initial, hc_deadline, checker) {
