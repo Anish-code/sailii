@@ -61,7 +61,7 @@ fn index_of_coincidence(text: &str) -> f64 {
 }
 
 fn try_word_boundary_all(text: &str, checker: &CheckerTypes) -> Vec<String> {
-    let total_deadline = std::time::Instant::now() + std::time::Duration::from_millis(5000);
+    let total_deadline = std::time::Instant::now() + std::time::Duration::from_millis(20000);
     let cx_words: Vec<(usize, Vec<u8>)> = {
         let mut pos = 0usize;
         text.split_whitespace().filter_map(|w| {
@@ -79,13 +79,20 @@ fn try_word_boundary_all(text: &str, checker: &CheckerTypes) -> Vec<String> {
     let max_klen = (total_chars / 2).min(20).max(2);
     let dict = crate::dictionary::wordlist();
     let mut results = Vec::new();
-    let per_klen = std::time::Duration::from_millis(2500);
+    let per_klen = std::time::Duration::from_millis(1000);
 
-    for klen in 2..=max_klen {
+    let mut order: Vec<usize> = estimate_key_lengths(text);
+    order.retain(|&k| k <= max_klen);
+    order.truncate(8);
+    for k in 2..=max_klen {
+        if !order.contains(&k) { order.push(k); }
+    }
+
+    for &klen in &order {
         if std::time::Instant::now() >= total_deadline { eprintln!("[vigenere] wb: total deadline expired, breaking at klen={}", klen); break; }
-        let klen_deadline = std::time::Instant::now() + per_klen;
+        let klen_deadline = (std::time::Instant::now() + per_klen).min(total_deadline);
         let mut key: Vec<Option<u8>> = vec![None; klen];
-        if backtrack_fill(&cx_words, &dict.by_length, 0, &mut key, klen, klen_deadline) {
+        if backtrack_fill(&cx_words, &dict.by_length, &dict.set, 0, &mut key, klen, klen_deadline) {
             if key.iter().all(|k| k.is_some()) {
                 let key_str: String = key.iter().map(|k| (k.unwrap() + b'A') as char).collect();
                 let decoded = vigenere_decode(text, &key_str);
@@ -97,13 +104,25 @@ fn try_word_boundary_all(text: &str, checker: &CheckerTypes) -> Vec<String> {
             }
         }
     }
-    eprintln!("[vigenere] wb: done, results={:?}", results);
+    eprintln!("[vigenere] wb: loop done order_len={} results={:?}", order.len(), results);
     results
+}
+
+fn compute_pw_from_key(key: &[Option<u8>], start: usize, cx_letters: &[u8], klen: usize) -> Option<String> {
+    let wlen = cx_letters.len();
+    let mut pw_bytes = Vec::with_capacity(wlen);
+    for i in 0..wlen {
+        let kp = (start + i) % klen;
+        let kv = key[kp]?;
+        pw_bytes.push(((cx_letters[i] + 26 - kv) % 26) + b'a');
+    }
+    Some(unsafe { String::from_utf8_unchecked(pw_bytes) })
 }
 
 fn backtrack_fill(
     cx_words: &[(usize, Vec<u8>)],
     by_len: &[Vec<String>],
+    dict_set: &std::collections::HashSet<String>,
     idx: usize,
     key: &mut Vec<Option<u8>>,
     klen: usize,
@@ -121,7 +140,22 @@ fn backtrack_fill(
     let wlen = cx_letters.len();
     if wlen > 20 || wlen >= by_len.len() { return false; }
 
-    for pw in &by_len[wlen] {
+    // Fast path: if all key positions are set, compute pw from key and check dict
+    if key.iter().all(|k| k.is_some()) {
+        if let Some(pw) = compute_pw_from_key(key, *start, cx_letters, klen) {
+            let in_dict = dict_set.contains(&pw);
+            eprintln!("[vigenere] fast idx={} pw={} in_dict={}", idx, pw, in_dict);
+            if in_dict {
+                return backtrack_fill(cx_words, by_len, dict_set, idx + 1, key, klen, deadline);
+            }
+        }
+        return false;
+    }
+
+    for pw in by_len[wlen].iter() {
+        if std::time::Instant::now() >= deadline { 
+            return false; 
+        }
         let pw_bytes = pw.as_bytes();
         let mut ok = true;
         let mut updates: Vec<(usize, u8)> = Vec::new();
@@ -131,7 +165,6 @@ fn backtrack_fill(
             if let Some(existing) = key[kp] {
                 if existing != kv { ok = false; break; }
             } else {
-                // Check if this key position already has a pending update
                 if let Some(&(_, existing_kv)) = updates.iter().find(|&&(p, _)| p == kp) {
                     if existing_kv != kv { ok = false; break; }
                 } else {
@@ -141,10 +174,7 @@ fn backtrack_fill(
         }
         if !ok { continue; }
         for &(kp, kv) in &updates { key[kp] = Some(kv); }
-        let prev_key_str: String = key.iter().map(|k| if let Some(v) = k { (v + b'A') as char } else { '?' }).collect();
-        if std::time::Instant::now() >= deadline { return false; }
-        if backtrack_fill(cx_words, by_len, idx + 1, key, klen, deadline) { 
-            eprintln!("[vigenere] backtrack found at idx={} pw={:?} key after={}", idx, pw, prev_key_str);
+        if backtrack_fill(cx_words, by_len, dict_set, idx + 1, key, klen, deadline) { 
             return true; 
         }
         for &(kp, _) in &updates { key[kp] = None; }
@@ -270,6 +300,50 @@ fn hill_climb_key(text: &str, initial_key: &str, deadline: std::time::Instant, c
     check_key(&best_key)
 }
 
+fn kasiski_examination(text: &str, max_key_len: usize) -> Vec<usize> {
+    let clean = filter_alpha(text);
+    if clean.len() < 6 {
+        return (2..=max_key_len).collect();
+    }
+
+    let chars: Vec<char> = clean.chars().collect();
+    let mut trigram_positions: std::collections::HashMap<[char; 3], Vec<usize>> = std::collections::HashMap::new();
+
+    for i in 0..chars.len().saturating_sub(2) {
+        let tri = [chars[i], chars[i + 1], chars[i + 2]];
+        trigram_positions.entry(tri).or_default().push(i);
+    }
+
+    let mut factor_counts: Vec<usize> = vec![0; max_key_len + 1];
+
+    for (_, positions) in &trigram_positions {
+        if positions.len() < 2 {
+            continue;
+        }
+        for i in 0..positions.len() {
+            for j in (i + 1)..positions.len() {
+                let dist = positions[j] - positions[i];
+                for klen in 2..=max_key_len {
+                    if dist % klen == 0 {
+                        factor_counts[klen] += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    let mut kasiski_scores: Vec<(usize, usize)> = factor_counts.iter()
+        .enumerate()
+        .skip(2)
+        .map(|(k, &count)| (k, count))
+        .collect();
+    kasiski_scores.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+
+    let result: Vec<usize> = kasiski_scores.iter().map(|(k, _)| *k).collect();
+    eprintln!("[vigenere] kasiski: {:?}", result);
+    result
+}
+
 fn estimate_key_lengths(text: &str) -> Vec<usize> {
     let clean = filter_alpha(text);
     let max_key_len = (clean.len() / 2).min(20).max(2);
@@ -289,14 +363,29 @@ fn estimate_key_lengths(text: &str) -> Vec<usize> {
         })
         .collect();
     scores.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+
+    let kasiski_order = kasiski_examination(text, max_key_len);
+
     let ic_top: Vec<usize> = scores.iter().take(5).map(|(k, _)| *k).collect();
-    let all: Vec<usize> = (2..=max_key_len).collect();
-    let mut combined: Vec<usize> = ic_top.clone();
-    for k in all {
-        if !combined.contains(&k) {
+    let mut seen = std::collections::HashSet::new();
+    let mut combined = Vec::new();
+
+    for &k in &ic_top {
+        if seen.insert(k) {
             combined.push(k);
         }
     }
+    for &k in &kasiski_order {
+        if seen.insert(k) {
+            combined.push(k);
+        }
+    }
+    for k in 2..=max_key_len {
+        if seen.insert(k) {
+            combined.push(k);
+        }
+    }
+    eprintln!("[vigenere] estimate_key_lengths: {:?}", combined);
     combined
 }
 
@@ -366,6 +455,7 @@ impl Crack for Decoder<VigenereDecoder> {
         eprintln!("[vigenere] estimated key lengths: {:?}", key_lengths);
         let mut tried = Vec::new();
 
+        let mut best_solve: Option<(String, String, f64)> = None;
         for &kl in &key_lengths {
             let key = solve_key(text, kl);
             eprintln!("[vigenere] kl={} key={}", kl, key);
@@ -376,16 +466,26 @@ impl Crack for Decoder<VigenereDecoder> {
             let decoded = vigenere_decode(text, &key);
             eprintln!("[vigenere] decoded={:?} success={}", decoded, check_string_success(&decoded, text));
             if check_string_success(&decoded, text) {
+                let chi = full_text_chi_squared(&decoded);
                 let check_result = checker.check_text(&decoded);
-                eprintln!("[vigenere] check_result.is_identified={}", check_result.is_identified);
+                eprintln!("[vigenere] check_result.is_identified={} chi={:.1}", check_result.is_identified, chi);
                 if check_result.is_identified {
-                    result.success = true;
-                    result.unencrypted_text = Some(vec![decoded]);
-                    result.key = Some(key);
-                    result.checker_name = check_result.checker_name;
-                    return result;
+                    let is_better = match &best_solve {
+                        Some((_, _, best_chi)) => chi < *best_chi,
+                        None => true,
+                    };
+                    if is_better {
+                        best_solve = Some((key.clone(), decoded, chi));
+                    }
                 }
             }
+        }
+        if let Some((ref key, ref decoded, _)) = best_solve {
+            eprintln!("[vigenere] best_solve_key key={} decoded={:?}", key, decoded);
+            result.success = true;
+            result.unencrypted_text = Some(vec![decoded.clone()]);
+            result.key = Some(key.clone());
+            result.checker_name = checker.check_text(decoded).checker_name;
         }
 
         let fallback_keys = [
