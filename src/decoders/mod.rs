@@ -95,7 +95,6 @@ macro_rules! delegate {
 
 impl Crack for DecoderType {
     fn crack(&self, text: &str, checker: &CheckerTypes) -> CrackResult {
-        let _ = std::fs::write("C:\\Users\\anish\\Desktop\\crypto\\sailii\\debug_deleg.txt", format!("DecoderType::crack called! text={} len={}", text, text.len()));
         delegate!(self, crack, text, checker)
     }
 
@@ -120,7 +119,6 @@ pub fn get_decoder_by_name(name: &str) -> Option<&'static dyn Crack> {
 }
 
 pub fn get_all_decoders() -> Vec<&'static dyn Crack> {
-    let _ = std::fs::write("C:\\Users\\anish\\Desktop\\crypto\\sailii\\debug_decoders.txt", format!("get_all_decoders called! count={}", DECODER_MAP.len()));
     DECODER_MAP.values().map(|b| b.as_ref() as &dyn Crack).collect()
 }
 
