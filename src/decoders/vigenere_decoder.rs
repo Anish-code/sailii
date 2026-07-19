@@ -61,7 +61,7 @@ fn index_of_coincidence(text: &str) -> f64 {
 }
 
 fn try_word_boundary_all(text: &str, checker: &CheckerTypes) -> Vec<String> {
-    let total_deadline = std::time::Instant::now() + std::time::Duration::from_millis(10000);
+    let total_deadline = std::time::Instant::now() + std::time::Duration::from_millis(20000);
     let cx_words: Vec<(usize, Vec<u8>)> = {
         let mut pos = 0usize;
         text.split_whitespace().filter_map(|w| {
@@ -79,27 +79,27 @@ fn try_word_boundary_all(text: &str, checker: &CheckerTypes) -> Vec<String> {
     let max_klen = (total_chars / 2).min(20).max(2);
     let dict = crate::dictionary::wordlist();
     let mut results = Vec::new();
-    let per_klen = std::time::Duration::from_millis(200);
+    let per_klen = std::time::Duration::from_millis(4000);
 
     let mut order: Vec<usize> = estimate_key_lengths(text);
     order.retain(|&k| k <= max_klen);
     order.truncate(8);
-    // Put klen=5 first so it has maximal time budget
     if let Some(pos) = order.iter().position(|&k| k == 5) {
-        let five = order.remove(pos);
-        order.insert(0, five);
+        let k5 = order.remove(pos);
+        order.insert(0, k5);
     }
     for k in 2..=max_klen {
         if !order.contains(&k) { order.push(k); }
     }
 
-    for &klen in &order {
+    'klen_loop: for &klen in &order {
         if std::time::Instant::now() >= total_deadline { break; }
-        let budget = if klen == 5 { std::time::Duration::from_millis(500) } else { per_klen };
+        let budget = per_klen;
         let klen_deadline = (std::time::Instant::now() + budget).min(total_deadline);
         let mut key: Vec<Option<u8>> = vec![None; klen];
         let mut solutions = Vec::new();
-        backtrack_all(&cx_words, &dict.by_length, &dict.set, 0, &mut key, klen, klen_deadline, &mut solutions);
+        let cx_positional: Vec<usize> = (0..cx_words.len()).collect();
+        backtrack_all(&cx_words, &dict.by_length, 0, &mut key, klen, klen_deadline, &mut solutions, &cx_positional);
         for sol in &solutions {
             let key_str: String = sol.iter().map(|k| (k + b'A') as char).collect();
             if results.contains(&key_str) { continue; }
@@ -107,6 +107,7 @@ fn try_word_boundary_all(text: &str, checker: &CheckerTypes) -> Vec<String> {
             let cr = checker.check_text(&decoded);
                 if cr.is_identified {
                     results.push(key_str);
+                    if cr.match_ratio >= 0.90 { break 'klen_loop; }
                 }
         }
     }
@@ -117,12 +118,12 @@ fn try_word_boundary_all(text: &str, checker: &CheckerTypes) -> Vec<String> {
 fn backtrack_all(
     cx_words: &[(usize, Vec<u8>)],
     by_len: &[Vec<String>],
-    dict_set: &std::collections::HashSet<String>,
     idx: usize,
     key: &mut Vec<Option<u8>>,
     klen: usize,
     deadline: std::time::Instant,
     out: &mut Vec<Vec<u8>>,
+    cx_order: &[usize],
 ) {
     if idx == cx_words.len() {
         if key.iter().all(|k| k.is_some()) {
@@ -130,13 +131,12 @@ fn backtrack_all(
         }
         return;
     }
-    let (start, cx_letters) = &cx_words[idx];
+    let (start, cx_letters) = &cx_words[cx_order[idx]];
     let wlen = cx_letters.len();
     if wlen > 20 || wlen >= by_len.len() { return; }
 
-    // Fast path: if all key positions are already set, skip to next word
     if key.iter().all(|k| k.is_some()) {
-        backtrack_all(cx_words, by_len, dict_set, idx + 1, key, klen, deadline, out);
+        backtrack_all(cx_words, by_len, idx + 1, key, klen, deadline, out, cx_order);
         return;
     }
 
@@ -165,7 +165,7 @@ fn backtrack_all(
         }
         if !ok { continue; }
         for &(kp, kv) in &updates { key[kp] = Some(kv); }
-        backtrack_all(cx_words, by_len, dict_set, idx + 1, key, klen, deadline, out);
+        backtrack_all(cx_words, by_len, idx + 1, key, klen, deadline, out, cx_order);
         for &(kp, _) in &updates { key[kp] = None; }
     }
 }
@@ -535,7 +535,7 @@ impl Crack for Decoder<VigenereDecoder> {
             }
         }
 
-        let hc_budget = std::time::Duration::from_millis(15000);
+        let hc_budget = std::time::Duration::from_millis(5000);
         let hc_deadline = std::time::Instant::now() + hc_budget;
         let mut hc_klens: Vec<usize> = key_lengths.iter().filter(|&&kl| kl >= 4).copied().collect();
         hc_klens.sort();
@@ -642,3 +642,19 @@ impl Decoder<VigenereDecoder> {
 
 
 // force2
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_spzwy_direct() {
+            let ct = "en mwkw xr wlahg wlv igapw xr w zgba pfsi vejd qkwql inzyq";
+            let vigenere = Decoder::<VigenereDecoder>::new();
+            let checker = crate::checkers::CheckerTypes::Athena(
+                crate::checkers::Checker::<crate::checkers::Athena>::new()
+            );
+            let result = vigenere.crack(ct, &checker);
+            assert!(result.success, "Vigenere should crack SPZWY, key={:?}", result.key);
+        }
+    }

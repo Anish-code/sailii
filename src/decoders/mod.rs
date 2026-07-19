@@ -18,6 +18,10 @@ mod vigenere_decoder;
 mod a1z26_decoder;
 mod braille_decoder;
 mod z85_decoder;
+mod aes256_decoder;
+mod xor_decoder;
+mod rot13_decoder;
+mod substitution_decoder;
 
 use std::sync::LazyLock;
 use std::collections::HashMap;
@@ -43,6 +47,10 @@ pub enum DecoderType {
     A1Z26(Decoder<a1z26_decoder::A1Z26Decoder>),
     Braille(Decoder<braille_decoder::BrailleDecoder>),
     Z85(Decoder<z85_decoder::Z85Decoder>),
+    Aes256(Decoder<aes256_decoder::Aes256Decoder>),
+    Xor(Decoder<xor_decoder::XorDecoder>),
+    Rot13(Decoder<rot13_decoder::Rot13Decoder>),
+    Substitution(Decoder<substitution_decoder::SubstitutionDecoder>),
 }
 
 impl DecoderType {
@@ -65,6 +73,10 @@ impl DecoderType {
             DecoderType::A1Z26(Decoder::<a1z26_decoder::A1Z26Decoder>::new()),
             DecoderType::Braille(Decoder::<braille_decoder::BrailleDecoder>::new()),
             DecoderType::Z85(Decoder::<z85_decoder::Z85Decoder>::new()),
+            DecoderType::Aes256(Decoder::<aes256_decoder::Aes256Decoder>::new()),
+            DecoderType::Xor(Decoder::<xor_decoder::XorDecoder>::new()),
+            DecoderType::Rot13(Decoder::<rot13_decoder::Rot13Decoder>::new()),
+            DecoderType::Substitution(Decoder::<substitution_decoder::SubstitutionDecoder>::new()),
         ]
     }
 }
@@ -89,6 +101,10 @@ macro_rules! delegate {
             DecoderType::A1Z26(d) => d.$method($($args),*),
             DecoderType::Braille(d) => d.$method($($args),*),
             DecoderType::Z85(d) => d.$method($($args),*),
+            DecoderType::Aes256(d) => d.$method($($args),*),
+            DecoderType::Xor(d) => d.$method($($args),*),
+            DecoderType::Rot13(d) => d.$method($($args),*),
+            DecoderType::Substitution(d) => d.$method($($args),*),
         }
     };
 }
