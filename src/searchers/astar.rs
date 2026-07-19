@@ -8,6 +8,7 @@ use std::collections::BinaryHeap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use dashmap::DashSet;
+use rayon::prelude::*;
 
 #[derive(Debug, Clone)]
 pub struct SearchNode {
@@ -137,25 +138,48 @@ impl AStarSearch {
             d
         };
 
+        struct DecoderOutput {
+            decoder_name: &'static str,
+            popularity: f32,
+            result: CrackResult,
+        }
+
+        let outputs: Vec<DecoderOutput> = decoders.par_iter()
+            .filter_map(|decoder| {
+                if self.stop_flag.load(Ordering::Relaxed) {
+                    return None;
+                }
+
+                let decoder_name = decoder.get_name();
+
+                if node.path.len() >= 1 {
+                    let prev = &node.path[node.path.len() - 1];
+                    if decoder.get_tags().contains(&"base") && decoder_name == prev {
+                        return None;
+                    }
+                }
+
+                record_decoder_attempt(decoder_name);
+
+                let result = decoder.crack(&node.text, &self.checker);
+
+                Some(DecoderOutput {
+                    decoder_name,
+                    popularity: decoder.get_popularity(),
+                    result,
+                })
+            })
+            .collect();
+
         let mut results = Vec::new();
 
-        for decoder in &decoders {
+        for output in outputs {
             if self.stop_flag.load(Ordering::Relaxed) {
                 return results;
             }
 
-            let decoder_name = decoder.get_name();
-
-            if node.path.len() >= 1 {
-                let prev = &node.path[node.path.len() - 1];
-                if decoder.get_tags().contains(&"base") && decoder_name == prev {
-                    continue;
-                }
-            }
-
-            record_decoder_attempt(decoder_name);
-
-            let result = decoder.crack(&node.text, &self.checker);
+            let decoder_name = output.decoder_name;
+            let result = output.result;
 
             if result.success {
                 record_decoder_success(decoder_name);
@@ -192,7 +216,7 @@ impl AStarSearch {
                     &new_path,
                     decoder_name,
                     &decoded,
-                    decoder.get_popularity(),
+                    output.popularity,
                 );
 
                 let cost = new_path.len() as f32;

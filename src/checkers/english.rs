@@ -46,7 +46,7 @@ impl Check for Checker<EnglishChecker> {
         let total_ratio = (long_matches + short_matches) as f64 / meaningful_words.len() as f64;
 
         let mut is_identified = (long_matches == meaningful_words.iter().filter(|w| w.len() >= 3).count() && long_matches >= 1)
-            || (long_matches >= 1 && total_ratio >= 0.65);
+            || (long_matches >= 1 && total_ratio >= 0.85);
 
         if !is_identified && meaningful_words.len() == 1 && meaningful_words[0].len() >= 8 {
             let word = meaningful_words[0];
