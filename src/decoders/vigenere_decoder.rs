@@ -12,6 +12,7 @@ const ENGLISH_FREQ: [f64; 26] = [
 ];
 
 fn vigenere_decode(text: &str, key: &str) -> String {
+    let key: String = key.chars().filter(|c| c.is_ascii_alphabetic()).collect();
     let key = key.to_uppercase();
     let key_bytes: Vec<u8> = key.bytes().collect();
     if key_bytes.is_empty() {
@@ -437,6 +438,24 @@ impl Crack for Decoder<VigenereDecoder> {
         let has_lower = text.chars().any(|c| c.is_ascii_alphabetic());
         if !has_lower {
             return result;
+        }
+
+        // If a key is provided via --key, try it directly (only if key has alphabetic chars)
+        if let Some(ref key) = crate::config::get_config().key {
+            let alpha_key: String = key.chars().filter(|c| c.is_ascii_alphabetic()).collect();
+            if !alpha_key.is_empty() {
+                let decoded = vigenere_decode(text, key);
+                if check_string_success(&decoded, text) {
+                    let check_result = checker.check_text(&decoded);
+                    if check_result.is_identified && check_result.match_ratio >= 0.70 {
+                        result.success = true;
+                        result.unencrypted_text = Some(vec![decoded]);
+                        result.key = Some(key.clone());
+                        result.checker_name = check_result.checker_name;
+                        return result;
+                    }
+                }
+            }
         }
 
         let key_lengths = estimate_key_lengths(text);

@@ -9,6 +9,33 @@ use std::marker::PhantomData;
 
 pub struct Aes256Decoder;
 
+/// Try all AES-256 modes (ECB, CBC with zero/extracted IV) using the given password,
+/// testing both pad32 and sha32 key derivation. Returns the first successful plaintext.
+pub fn decrypt_with_key(ciphertext_b64: &str, password: &str) -> Option<String> {
+    let raw = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, ciphertext_b64.trim()).ok()?;
+    if raw.is_empty() || raw.len() % 16 != 0 { return None; }
+
+    let zero_iv = [0u8; 16];
+    let k32_pad = pad_key::<32>(password);
+    let k32_hash = hash_key::<32>(password);
+
+    let (pre_iv, pre_ct) = if raw.len() > 16 {
+        let mut iv = [0u8; 16];
+        iv.copy_from_slice(&raw[..16]);
+        (Some(iv), &raw[16..])
+    } else {
+        (None, &raw[..])
+    };
+
+    for (key, _tag) in [(&k32_pad, "pad32"), (&k32_hash, "sha32")] {
+        if let Some(pt) = try_ecb_256(&raw, key) { return Some(pt); }
+        if pre_iv.is_some() { if let Some(pt) = try_ecb_256(pre_ct, key) { return Some(pt); } }
+        if let Some(pt) = try_cbc_256(&raw, key, &zero_iv) { return Some(pt); }
+        if let Some(ref iv) = pre_iv { if let Some(pt) = try_cbc_256(pre_ct, key, iv) { return Some(pt); } }
+    }
+    None
+}
+
 fn unpad_pkcs7(plaintext: &mut Vec<u8>) -> Option<()> {
     let pad_len = *plaintext.last()? as usize;
     if pad_len == 0 || pad_len > 16 { return None; }
@@ -199,6 +226,13 @@ impl Crack for Decoder<Aes256Decoder> {
         } else {
             (None, &raw[..])
         };
+
+        // If a key is provided via --key, try it first
+        if let Some(ref key_password) = crate::config::get_config().key {
+            if let Some(r) = try_password(text, &raw, pre_iv, pre_ct, checker, key_password) {
+                return r;
+            }
+        }
 
         let hardcoded = [
             "jkandkj21321kldanfkenaf",
