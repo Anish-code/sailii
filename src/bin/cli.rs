@@ -21,6 +21,9 @@ struct Cli {
 
     #[arg(long = "key")]
     key: Option<String>,
+
+    #[arg(long = "key-file")]
+    key_file: Option<String>,
 }
 
 fn main() {
@@ -38,11 +41,31 @@ fn main() {
         std::process::exit(1);
     };
 
+    let mut keys = Vec::new();
+    if let Some(k) = cli.key {
+        for part in k.split(',') {
+            let trimmed = part.trim();
+            if !trimmed.is_empty() {
+                keys.push(trimmed.to_string());
+            }
+        }
+    }
+    if let Some(path) = cli.key_file {
+        if let Ok(contents) = std::fs::read_to_string(&path) {
+            for line in contents.lines() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    keys.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+
     let config = Config {
         timeout_secs: cli.timeout,
         verbose: cli.verbose,
         max_depth: cli.max_depth,
-        key: cli.key,
+        keys,
         ..Default::default()
     };
 

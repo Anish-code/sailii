@@ -12,7 +12,7 @@ pub struct Config {
     pub human_checker_on: bool,
     pub min_word_length: usize,
     pub max_depth: usize,
-    pub key: Option<String>,
+    pub keys: Vec<String>,
 }
 
 impl Default for Config {
@@ -24,7 +24,7 @@ impl Default for Config {
             human_checker_on: false,
             min_word_length: 2,
             max_depth: 20,
-            key: None,
+            keys: Vec::new(),
         }
     }
 }
