@@ -1,11 +1,13 @@
-use crate::decoders::{Crack, CrackResult, Decoder, check_string_success};
+use crate::decoders::{Crack, CrackResult, Decoder};
 use crate::checkers::CheckerTypes;
 use crate::dictionary;
+use crate::config::get_config;
 use aes::cipher::{BlockDecrypt, KeyInit, generic_array::GenericArray, generic_array::typenum::U16};
 use aes::{Aes128Dec, Aes192Dec, Aes256Dec};
 use rayon::prelude::*;
 use sha2::{Sha256, Digest};
 use std::marker::PhantomData;
+use std::sync::Mutex;
 
 pub struct Aes256Decoder;
 
@@ -145,66 +147,192 @@ fn hash_key<const N: usize>(password: &str) -> [u8; N] {
     key
 }
 
-fn check_and_set(text: &str, decoded: &str, checker: &CheckerTypes, result: &mut CrackResult, key_desc: &str) -> bool {
-    if check_string_success(decoded, text) {
-        let cr = checker.check_text(decoded);
-        if cr.is_identified {
-            result.success = true;
-            result.unencrypted_text = Some(vec![decoded.to_string()]);
-            result.key = Some(key_desc.to_string());
-            result.checker_name = cr.checker_name;
-            return true;
+struct ScoredResult {
+    plaintext: String,
+    key_desc: String,
+    match_ratio: f64,
+}
+
+/// Try a single AES mode combination and return (plaintext, blocks_decrypted, key_desc) on success.
+fn try_one(raw: &[u8], key: &[u8], is_cbc: bool, iv: &[u8; 16]) -> Option<(String, usize)> {
+    let pt = match key.len() {
+        16 => {
+            if is_cbc { try_cbc_128(raw, unsafe { &*(key.as_ptr() as *const [u8; 16]) }, iv) }
+            else { try_ecb_128(raw, unsafe { &*(key.as_ptr() as *const [u8; 16]) }) }
+        }
+        24 => {
+            if is_cbc { try_cbc_192(raw, unsafe { &*(key.as_ptr() as *const [u8; 24]) }, iv) }
+            else { try_ecb_192(raw, unsafe { &*(key.as_ptr() as *const [u8; 24]) }) }
+        }
+        32 => {
+            if is_cbc { try_cbc_256(raw, unsafe { &*(key.as_ptr() as *const [u8; 32]) }, iv) }
+            else { try_ecb_256(raw, unsafe { &*(key.as_ptr() as *const [u8; 32]) }) }
+        }
+        _ => return None,
+    }?;
+    let blocks = raw.len() / 16;
+    Some((pt, blocks))
+}
+
+/// Try all AES key sizes × derivations × modes in parallel for one password.
+/// Returns all candidate (plaintext, blocks, key_desc) triples that pass PKCS7 unpadding.
+fn try_all_par(raw: &[u8], pre_iv: Option<[u8; 16]>, pre_ct: &[u8], pw: &str) -> Vec<(String, usize, String)> {
+    let zero_iv = [0u8; 16];
+    let has_iv = pre_iv.is_some();
+    let extracted = pre_iv.unwrap_or(zero_iv);
+
+    let raw_total_blocks = raw.len() / 16;
+    let pre_ct_blocks = pre_ct.len() / 16;
+
+    struct Attempt {
+        key: Vec<u8>,
+        data: Vec<u8>,
+        iv: [u8; 16],
+        is_cbc: bool,
+        desc: String,
+        blocks: usize,
+    }
+
+    let mut attempts = Vec::new();
+
+    for (key_bytes, tag) in [
+        (pad_key::<16>(pw).to_vec(), "pad16"),
+        (hash_key::<16>(pw).to_vec(), "sha16"),
+        (pad_key::<24>(pw).to_vec(), "pad24"),
+        (hash_key::<24>(pw).to_vec(), "sha24"),
+        (pad_key::<32>(pw).to_vec(), "pad32"),
+        (hash_key::<32>(pw).to_vec(), "sha32"),
+    ] {
+        let key_size = key_bytes.len();
+        let prefix = match key_size {
+            16 => "AES-128",
+            24 => "AES-192",
+            _ => "AES-256",
+        };
+
+        // ECB on full raw
+        attempts.push(Attempt {
+            key: key_bytes.clone(),
+            data: raw.to_vec(),
+            iv: zero_iv,
+            is_cbc: false,
+            desc: format!("{}/{}/ECB:{}", prefix, tag, pw),
+            blocks: raw_total_blocks,
+        });
+        // CBC with zero IV on full raw
+        attempts.push(Attempt {
+            key: key_bytes.clone(),
+            data: raw.to_vec(),
+            iv: zero_iv,
+            is_cbc: true,
+            desc: format!("{}/{}/CBC-zero:{}", prefix, tag, pw),
+            blocks: raw_total_blocks,
+        });
+
+        if has_iv {
+            // ECB on pre_ct (first 16 bytes extracted as IV)
+            attempts.push(Attempt {
+                key: key_bytes.clone(),
+                data: pre_ct.to_vec(),
+                iv: zero_iv,
+                is_cbc: false,
+                desc: format!("{}/{}/ECB-extracted:{}", prefix, tag, pw),
+                blocks: pre_ct_blocks,
+            });
+            // CBC with extracted IV on pre_ct
+            attempts.push(Attempt {
+                key: key_bytes.clone(),
+                data: pre_ct.to_vec(),
+                iv: extracted,
+                is_cbc: true,
+                desc: format!("{}/{}/CBC-extracted:{}", prefix, tag, pw),
+                blocks: pre_ct_blocks,
+            });
         }
     }
-    false
+
+    // Parallel execution
+    let results = Mutex::new(Vec::new());
+    attempts.par_iter().for_each(|a| {
+        if let Some((pt, _)) = try_one(&a.data, &a.key, a.is_cbc, &a.iv) {
+            let mut r = results.lock().unwrap();
+            r.push((pt, a.blocks, a.desc.clone()));
+        }
+    });
+
+    results.into_inner().unwrap()
 }
 
-fn try_all(text: &str, raw: &[u8], pre_iv: Option<[u8; 16]>, pre_ct: &[u8], checker: &CheckerTypes, result: &mut CrackResult, pw: &str) -> bool {
-    let zero_iv = [0u8; 16];
-
-    // AES-128 (16-byte key)
-    let k16_pad = pad_key::<16>(pw);
-    let k16_hash = hash_key::<16>(pw);
-    for (key, tag) in [(&k16_pad, "pad16"), (&k16_hash, "sha16")] {
-        let desc = format!("AES-128/{}:{}", tag, pw);
-        if let Some(d) = try_ecb_128(raw, key) { if check_and_set(text, &d, checker, result, &desc) { return true; } }
-        if pre_iv.is_some() { if let Some(d) = try_ecb_128(pre_ct, key) { if check_and_set(text, &d, checker, result, &desc) { return true; } } }
-        if let Some(d) = try_cbc_128(raw, key, &zero_iv) { if check_and_set(text, &d, checker, result, &desc) { return true; } }
-        if let Some(ref iv) = pre_iv { if let Some(d) = try_cbc_128(pre_ct, key, iv) { if check_and_set(text, &d, checker, result, &desc) { return true; } } }
-    }
-
-    // AES-192 (24-byte key)
-    let k24_pad = pad_key::<24>(pw);
-    let k24_hash = hash_key::<24>(pw);
-    for (key, tag) in [(&k24_pad, "pad24"), (&k24_hash, "sha24")] {
-        let desc = format!("AES-192/{}:{}", tag, pw);
-        if let Some(d) = try_ecb_192(raw, key) { if check_and_set(text, &d, checker, result, &desc) { return true; } }
-        if pre_iv.is_some() { if let Some(d) = try_ecb_192(pre_ct, key) { if check_and_set(text, &d, checker, result, &desc) { return true; } } }
-        if let Some(d) = try_cbc_192(raw, key, &zero_iv) { if check_and_set(text, &d, checker, result, &desc) { return true; } }
-        if let Some(ref iv) = pre_iv { if let Some(d) = try_cbc_192(pre_ct, key, iv) { if check_and_set(text, &d, checker, result, &desc) { return true; } } }
-    }
-
-    // AES-256 (32-byte key)
-    let k32_pad = pad_key::<32>(pw);
-    let k32_hash = hash_key::<32>(pw);
-    for (key, tag) in [(&k32_pad, "pad32"), (&k32_hash, "sha32")] {
-        let desc = format!("AES-256/{}:{}", tag, pw);
-        if let Some(d) = try_ecb_256(raw, key) { if check_and_set(text, &d, checker, result, &desc) { return true; } }
-        if pre_iv.is_some() { if let Some(d) = try_ecb_256(pre_ct, key) { if check_and_set(text, &d, checker, result, &desc) { return true; } } }
-        if let Some(d) = try_cbc_256(raw, key, &zero_iv) { if check_and_set(text, &d, checker, result, &desc) { return true; } }
-        if let Some(ref iv) = pre_iv { if let Some(d) = try_cbc_256(pre_ct, key, iv) { if check_and_set(text, &d, checker, result, &desc) { return true; } } }
-    }
-
-    false
+/// Score a candidate: prefer longer plaintext with more blocks decrypted.
+fn score_candidate(pt: &str, blocks: usize, max_blocks: usize, checker: &CheckerTypes) -> Option<ScoredResult> {
+    let cr = checker.check_text(pt);
+    if !cr.is_identified { return None; }
+    // Strong preference for decrypting the full ciphertext (all blocks).
+    // Extracted-IV modes decrypt half the data and can produce artificially
+    // high match ratios on shorter text.
+    let block_penalty = 1.0 - (max_blocks.saturating_sub(blocks) as f64 * 0.20);
+    let effective_ratio = cr.match_ratio * block_penalty;
+    Some(ScoredResult {
+        plaintext: pt.to_string(),
+        key_desc: String::new(),
+        match_ratio: effective_ratio,
+    })
 }
 
-fn try_password(text: &str, raw: &[u8], pre_iv: Option<[u8; 16]>, pre_ct: &[u8], checker: &CheckerTypes, pw: &str) -> Option<CrackResult> {
-    let mut r = CrackResult::new("AES-256", "", "");
-    if try_all(text, raw, pre_iv, pre_ct, checker, &mut r, pw) {
-        Some(r)
-    } else {
-        None
+/// Test a single password: try all modes in parallel, score with checker, return best result.
+fn try_password_par(text: &str, raw: &[u8], pre_iv: Option<[u8; 16]>, pre_ct: &[u8], checker: &CheckerTypes, pw: &str) -> Option<CrackResult> {
+    let candidates = try_all_par(raw, pre_iv, pre_ct, pw);
+    if candidates.is_empty() { return None; }
+
+    let max_blocks = raw.len() / 16;
+
+    // Score all candidates with the checker and pick the best
+    let best = candidates.par_iter()
+        .filter_map(|(pt, blocks, desc)| {
+            let mut s = score_candidate(pt, *blocks, max_blocks, checker)?;
+            s.key_desc = desc.clone();
+            Some(s)
+        })
+        .max_by(|a, b| a.match_ratio.partial_cmp(&b.match_ratio).unwrap_or(std::cmp::Ordering::Equal));
+
+    best.map(|s| {
+        let mut r = CrackResult::new("AES-256", "", "");
+        r.success = true;
+        r.encrypted_text = text.to_string();
+        r.unencrypted_text = Some(vec![s.plaintext]);
+        r.key = Some(s.key_desc);
+        r.match_ratio = s.match_ratio;
+        r
+    })
+}
+
+fn collect_passwords() -> Vec<String> {
+    let config = get_config();
+    let mut all = config.keys.clone();
+
+    let hardcoded = [
+        "jkandkj21321kldanfkenaf",
+        "", "password", "Password", "12345678", "secret", "aes", "AES",
+    ];
+    for pw in &hardcoded {
+        if !all.contains(&pw.to_string()) {
+            all.push(pw.to_string());
+        }
     }
+
+    let dict = dictionary::wordlist();
+    for wlen in 4..=12usize {
+        if wlen >= dict.by_length.len() { continue; }
+        for word in &dict.by_length[wlen] {
+            if all.len() >= 500 + config.keys.len() { break; }
+            if !all.contains(word) {
+                all.push(word.clone());
+            }
+        }
+        if all.len() >= 500 + config.keys.len() { break; }
+    }
+
+    all
 }
 
 impl Crack for Decoder<Aes256Decoder> {
@@ -227,44 +355,14 @@ impl Crack for Decoder<Aes256Decoder> {
             (None, &raw[..])
         };
 
-        // If a key is provided via --key, try it first
-        if let Some(ref key_password) = crate::config::get_config().key {
-            if let Some(r) = try_password(text, &raw, pre_iv, pre_ct, checker, key_password) {
-                return r;
-            }
-        }
+        let passwords = collect_passwords();
 
-        let hardcoded = [
-            "jkandkj21321kldanfkenaf",
-            "", "password", "Password", "12345678", "secret", "aes", "AES",
-        ];
-
-        for pw in &hardcoded {
-            if let Some(r) = try_password(text, &raw, pre_iv, pre_ct, checker, pw) {
-                return r;
-            }
-        }
-
-        let dict = dictionary::wordlist();
-        let mut dict_words: Vec<&str> = Vec::with_capacity(500);
-        for wlen in 4..=12usize {
-            if wlen >= dict.by_length.len() { continue; }
-            for word in &dict.by_length[wlen] {
-                if dict_words.len() >= 500 { break; }
-                dict_words.push(word.as_str());
-            }
-            if dict_words.len() >= 500 { break; }
-        }
-
-        if !dict_words.is_empty() {
-            if let Some(r) = dict_words.par_iter()
-                .filter_map(|pw| try_password(text, &raw, pre_iv, pre_ct, checker, pw))
-                .collect::<Vec<_>>()
-                .into_iter()
-                .next()
-            {
-                return r;
-            }
+        // Test all passwords in parallel, collect scored results, return best
+        if let Some(best) = passwords.par_iter()
+            .filter_map(|pw| try_password_par(text, &raw, pre_iv, pre_ct, checker, pw))
+            .max_by(|a, b| a.match_ratio.partial_cmp(&b.match_ratio).unwrap_or(std::cmp::Ordering::Equal))
+        {
+            return best;
         }
 
         result

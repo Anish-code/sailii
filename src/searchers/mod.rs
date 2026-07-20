@@ -14,8 +14,8 @@ use std::thread;
 pub fn search_for_plaintext(input: &str) -> Option<CrackResult> {
     let config = get_config();
 
-    // If a key is provided, skip cache and try key-aware decoders in priority order
-    if config.key.is_some() {
+    // If keys are provided, skip cache and try key-aware decoders in priority order
+    if !config.keys.is_empty() {
         let checker = CheckerTypes::Athena(Checker::<Athena>::new());
         // Try AES-256 first (most specific, requires valid base64/hex)
         if let Some(decoder) = get_decoder_by_name("AES-256") {
@@ -41,7 +41,7 @@ pub fn search_for_plaintext(input: &str) -> Option<CrackResult> {
                 return Some(result);
             }
         }
-        // Key didn't match any decoder — return failure early
+        // Keys didn't match any decoder — return failure early
         return None;
     }
 

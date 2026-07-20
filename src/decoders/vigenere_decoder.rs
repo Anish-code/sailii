@@ -440,10 +440,13 @@ impl Crack for Decoder<VigenereDecoder> {
             return result;
         }
 
-        // If a key is provided via --key, try it directly (only if key has alphabetic chars)
-        if let Some(ref key) = crate::config::get_config().key {
-            let alpha_key: String = key.chars().filter(|c| c.is_ascii_alphabetic()).collect();
-            if !alpha_key.is_empty() {
+        // If keys are provided via --key, try each (only alphabetic keys)
+        // and skip the normal solver (which can produce false positives).
+        let has_explicit_keys = !crate::config::get_config().keys.is_empty();
+        if has_explicit_keys {
+            for key in &crate::config::get_config().keys {
+                let alpha_key: String = key.chars().filter(|c| c.is_ascii_alphabetic()).collect();
+                if alpha_key.is_empty() { continue; }
                 let decoded = vigenere_decode(text, key);
                 if check_string_success(&decoded, text) {
                     let check_result = checker.check_text(&decoded);
@@ -456,6 +459,8 @@ impl Crack for Decoder<VigenereDecoder> {
                     }
                 }
             }
+            // No explicit key matched — return failure, don't run the normal solver
+            return result;
         }
 
         let key_lengths = estimate_key_lengths(text);
