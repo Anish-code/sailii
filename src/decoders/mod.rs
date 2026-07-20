@@ -18,7 +18,7 @@ mod vigenere_decoder;
 mod a1z26_decoder;
 mod braille_decoder;
 mod z85_decoder;
-mod aes256_decoder;
+pub mod aes256_decoder;
 mod xor_decoder;
 mod rot13_decoder;
 mod substitution_decoder;

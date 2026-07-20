@@ -4,7 +4,7 @@ mod helper_functions;
 use crate::checkers::{CheckerTypes, Checker, Athena};
 use crate::checkers::english::EnglishChecker;
 use crate::config::get_config;
-use crate::decoders::CrackResult;
+use crate::decoders::{CrackResult, get_decoder_by_name};
 use crate::storage::{read_cache, insert_cache};
 use astar::AStarSearch;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,11 +12,43 @@ use std::sync::Arc;
 use std::thread;
 
 pub fn search_for_plaintext(input: &str) -> Option<CrackResult> {
+    let config = get_config();
+
+    // If a key is provided, skip cache and try key-aware decoders in priority order
+    if config.key.is_some() {
+        let checker = CheckerTypes::Athena(Checker::<Athena>::new());
+        // Try AES-256 first (most specific, requires valid base64/hex)
+        if let Some(decoder) = get_decoder_by_name("AES-256") {
+            let result = decoder.crack(input, &checker);
+            if result.success {
+                insert_cache(input, &result);
+                return Some(result);
+            }
+        }
+        // Then Caesar (key is a shift number — most constrained)
+        if let Some(decoder) = get_decoder_by_name("Caesar") {
+            let result = decoder.crack(input, &checker);
+            if result.success {
+                insert_cache(input, &result);
+                return Some(result);
+            }
+        }
+        // Then Vigenere (requires alphabetic key)
+        if let Some(decoder) = get_decoder_by_name("Vigenere") {
+            let result = decoder.crack(input, &checker);
+            if result.success {
+                insert_cache(input, &result);
+                return Some(result);
+            }
+        }
+        // Key didn't match any decoder — return failure early
+        return None;
+    }
+
     if let Some(cached) = read_cache(input) {
         return Some(cached);
     }
 
-    let config = get_config();
     let timeout = config.timeout_secs;
 
     let checker = CheckerTypes::Athena(Checker::<Athena>::new());

@@ -18,6 +18,9 @@ struct Cli {
 
     #[arg(long = "max-depth", default_value = "20")]
     max_depth: usize,
+
+    #[arg(long = "key")]
+    key: Option<String>,
 }
 
 fn main() {
@@ -39,6 +42,7 @@ fn main() {
         timeout_secs: cli.timeout,
         verbose: cli.verbose,
         max_depth: cli.max_depth,
+        key: cli.key,
         ..Default::default()
     };
 
